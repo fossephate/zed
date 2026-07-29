@@ -1341,6 +1341,7 @@ impl Render for TerminalView {
 
         div()
             .id("terminal-view")
+            .debug_selector(|| "terminal-content".into())
             .size_full()
             .relative()
             .track_focus(&self.focus_handle(cx))

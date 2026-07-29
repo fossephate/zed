@@ -191,6 +191,24 @@ pub struct TerminalSettingsContent {
     ///
     /// Default: "system"
     pub bell: Option<TerminalBell>,
+    /// Whether terminal tabs are laid out as a horizontal bar above the
+    /// terminal, or as a vertical list beside it.
+    ///
+    /// Default: "horizontal"
+    pub tab_orientation: Option<TerminalTabOrientation>,
+    /// Width of the vertical terminal tab list, in pixels.
+    ///
+    /// Has no effect when `tab_orientation` is "horizontal".
+    ///
+    /// Default: 180
+    #[serde(serialize_with = "crate::serialize_optional_f32_with_two_decimal_places")]
+    pub vertical_tab_width: Option<f32>,
+    /// Which side of the terminal the vertical tab list is placed on.
+    ///
+    /// Has no effect when `tab_orientation` is "horizontal".
+    ///
+    /// Default: "left"
+    pub vertical_tab_position: Option<TerminalVerticalTabPosition>,
 }
 
 /// Shell configuration to open the terminal with.
@@ -514,6 +532,48 @@ pub enum PathHyperlinkRegex {
 pub enum TerminalDockPosition {
     Left,
     Bottom,
+    Right,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalTabOrientation {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
+#[derive(
+    Copy,
+    Clone,
+    Debug,
+    Default,
+    Serialize,
+    Deserialize,
+    JsonSchema,
+    MergeFrom,
+    PartialEq,
+    Eq,
+    strum::VariantArray,
+    strum::VariantNames,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum TerminalVerticalTabPosition {
+    #[default]
+    Left,
     Right,
 }
 

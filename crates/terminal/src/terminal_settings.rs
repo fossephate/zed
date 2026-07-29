@@ -7,8 +7,8 @@ pub use settings::AlternateScroll;
 
 use settings::{
     IntoGpui, PathHyperlinkRegex, RegisterSetting, ShowScrollbar, TerminalBell, TerminalBlink,
-    TerminalDockPosition, TerminalLineHeight, VenvSettings, WorkingDirectory,
-    merge_from::MergeFrom,
+    TerminalDockPosition, TerminalLineHeight, TerminalTabOrientation,
+    TerminalVerticalTabPosition, VenvSettings, WorkingDirectory, merge_from::MergeFrom,
 };
 use task::Shell;
 use theme_settings::FontFamilyName;
@@ -51,6 +51,9 @@ pub struct TerminalSettings {
     pub path_hyperlink_timeout_ms: u64,
     pub show_count_badge: bool,
     pub bell: TerminalBell,
+    pub tab_orientation: TerminalTabOrientation,
+    pub vertical_tab_width: Pixels,
+    pub vertical_tab_position: TerminalVerticalTabPosition,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize, JsonSchema, PartialEq, Eq)]
@@ -134,6 +137,9 @@ impl settings::Settings for TerminalSettings {
             path_hyperlink_timeout_ms: project_content.path_hyperlink_timeout_ms.unwrap(),
             show_count_badge: user_content.show_count_badge.unwrap(),
             bell: user_content.bell.unwrap(),
+            tab_orientation: user_content.tab_orientation.unwrap(),
+            vertical_tab_width: px(user_content.vertical_tab_width.unwrap()),
+            vertical_tab_position: user_content.vertical_tab_position.unwrap(),
         }
     }
 }

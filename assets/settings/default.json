@@ -2094,6 +2094,19 @@
     "show_count_badge": false,
     // Whether to invoke the OS-specific alert sound when the terminal bell (BEL character) is printed.
     "bell": "off",
+    // Whether terminal tabs are laid out as a horizontal bar above the terminal,
+    // or as a vertical list beside it.
+    //
+    // Choices: horizontal, vertical
+    "tab_orientation": "horizontal",
+    // Width of the vertical terminal tab list, in pixels.
+    // Has no effect when "tab_orientation" is "horizontal".
+    "vertical_tab_width": 180,
+    // Which side of the terminal the vertical tab list is placed on.
+    // Has no effect when "tab_orientation" is "horizontal".
+    //
+    // Choices: left, right
+    "vertical_tab_position": "left",
   },
   "code_actions_on_format": {},
   // Settings related to running tasks.

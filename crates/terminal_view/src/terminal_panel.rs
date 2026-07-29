@@ -18,7 +18,9 @@ use gpui::{
 use itertools::Itertools;
 use project::{Fs, Project};
 
-use settings::{Settings, TerminalDockPosition};
+use settings::{
+    Settings, TerminalDockPosition, TerminalTabOrientation, TerminalVerticalTabPosition,
+};
 use task::{RevealStrategy, RevealTarget, Shell, ShellBuilder, SpawnInTerminal, TaskId};
 use terminal::{Terminal, terminal_settings::TerminalSettings};
 use ui::{
@@ -33,7 +35,7 @@ use workspace::{
     PaneGroup, SplitDirection, SplitDown, SplitLeft, SplitMode, SplitRight, SplitUp, SwapPaneDown,
     SwapPaneLeft, SwapPaneRight, SwapPaneUp, ToggleZoom, Workspace,
     dock::{DockPosition, Panel, PanelEvent, PanelHandle},
-    item::SerializableItem,
+    item::{ItemHandle, SerializableItem, TabContentParams},
     move_active_item, pane,
 };
 
@@ -1220,7 +1222,9 @@ pub fn new_terminal_pane(
         pane.set_zoomed(zoomed, cx);
         pane.set_can_navigate(false, cx);
         pane.display_nav_history_buttons(None);
-        pane.set_should_display_tab_bar(|_, _| true);
+        pane.set_should_display_tab_bar(|_, cx| {
+            TerminalSettings::get_global(cx).tab_orientation != TerminalTabOrientation::Vertical
+        });
         pane.set_zoom_out_on_close(false);
 
         let split_closure_terminal_panel = terminal_panel.downgrade();
@@ -1364,6 +1368,184 @@ impl workspace::Item for FailedToSpawnTerminal {
 
 impl EventEmitter<PanelEvent> for TerminalPanel {}
 
+fn render_vertical_tab(
+    pane: &Entity<Pane>,
+    ix: usize,
+    item: &dyn ItemHandle,
+    selected: bool,
+    deemphasized: bool,
+    window: &mut Window,
+    cx: &mut Context<TerminalPanel>,
+) -> impl IntoElement + use<> {
+    let colors = cx.theme().colors();
+    let item_id = item.item_id();
+    let close_item = item.boxed_clone();
+    let activate_item = item.boxed_clone();
+
+    h_flex()
+        .id(("vertical-terminal-tab", item_id.as_u64()))
+        .group("vertical-terminal-tab")
+        .w_full()
+        .gap_1()
+        .px_1p5()
+        .py_1()
+        .rounded_sm()
+        .cursor_pointer()
+        .map(|this| {
+            if selected {
+                this.bg(colors.tab_active_background)
+                    .text_color(colors.text_accent)
+            } else {
+                this.hover(|style| style.bg(colors.element_hover))
+            }
+        })
+        .when(deemphasized, |this| this.opacity(0.8))
+        .child(
+            div().flex_1().overflow_hidden().child(item.tab_content(
+                TabContentParams {
+                    selected,
+                    deemphasized,
+                    ..Default::default()
+                },
+                window,
+                cx,
+            )),
+        )
+        .child(
+            IconButton::new(("close-vertical-terminal-tab", item_id.as_u64()), IconName::Close)
+                .icon_size(IconSize::XSmall)
+                .visible_on_hover("vertical-terminal-tab")
+                .on_click({
+                    let pane = pane.clone();
+                    move |_, window, cx| {
+                        pane.update(cx, |pane, cx| {
+                            pane.close_item_by_id(
+                                close_item.item_id(),
+                                workspace::SaveIntent::Close,
+                                window,
+                                cx,
+                            )
+                            .detach_and_log_err(cx);
+                        });
+                    }
+                }),
+        )
+        .when_some(item.tab_tooltip_text(cx), |this, tooltip| {
+            this.tooltip(Tooltip::text(tooltip))
+        })
+        .on_click({
+            let pane = pane.clone();
+            move |_, window, cx| {
+                pane.update(cx, |pane, cx| {
+                    if let Some(index) = pane.index_for_item(activate_item.as_ref()) {
+                        pane.activate_item(index, true, true, window, cx);
+                    }
+                });
+            }
+        })
+        .on_drop({
+            let pane = pane.clone();
+            move |dragged_tab: &DraggedTab, window, cx| {
+                pane.update(cx, |pane, cx| {
+                    pane.drag_split_direction = None;
+                    pane.handle_tab_drop(dragged_tab, ix, false, window, cx);
+                });
+            }
+        })
+        .on_drag(
+            DraggedTab {
+                item: item.boxed_clone(),
+                pane: pane.clone(),
+                detail: 0,
+                is_active: selected,
+                ix,
+            },
+            |tab, _, _, cx| {
+                let label = tab.item.tab_content_text(0, cx);
+                cx.new(|_| DraggedTabPreview { label })
+            },
+        )
+}
+
+struct DraggedTabPreview {
+    label: SharedString,
+}
+
+impl Render for DraggedTabPreview {
+    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let colors = cx.theme().colors();
+        div()
+            .px_2()
+            .py_1()
+            .rounded_sm()
+            .border_1()
+            .border_color(colors.border)
+            .bg(colors.elevated_surface_background)
+            .child(Label::new(self.label.clone()).size(LabelSize::Small))
+    }
+}
+
+impl TerminalPanel {
+    fn render_vertical_tab_bar(
+        &self,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> impl IntoElement {
+        let pane = self.active_pane.clone();
+        let settings = TerminalSettings::get_global(cx);
+        let width = settings.vertical_tab_width;
+        let position = settings.vertical_tab_position;
+        let deemphasized = !pane.focus_handle(cx).contains_focused(window, cx);
+        let (items, active_item_id) = pane.read_with(cx, |pane, _| {
+            (
+                pane.items().map(|item| item.boxed_clone()).collect::<Vec<_>>(),
+                pane.active_item().map(|item| item.item_id()),
+            )
+        });
+        let items_len = items.len();
+
+        let tabs = items
+            .iter()
+            .enumerate()
+            .map(|(ix, item)| {
+                let selected = active_item_id == Some(item.item_id());
+                render_vertical_tab(&pane, ix, item.as_ref(), selected, deemphasized, window, cx)
+            })
+            .collect::<Vec<_>>();
+
+        v_flex()
+            .id("vertical-terminal-tabs")
+            .debug_selector(|| "vertical-terminal-tabs".into())
+            .h_full()
+            .w(width)
+            .flex_none()
+            .p_1()
+            .gap_px()
+            .overflow_y_scroll()
+            .map(|this| match position {
+                TerminalVerticalTabPosition::Left => this.border_r_1(),
+                TerminalVerticalTabPosition::Right => this.border_l_1(),
+            })
+            .border_color(cx.theme().colors().border)
+            .bg(cx.theme().colors().tab_bar_background)
+            .children(tabs)
+            .child(
+                div()
+                    .flex_grow(1.0)
+                    .min_h_4()
+                    .on_drop({
+                        let pane = pane.clone();
+                        move |dragged_tab: &DraggedTab, window, cx| {
+                            pane.update(cx, |pane, cx| {
+                                pane.drag_split_direction = None;
+                                pane.handle_tab_drop(dragged_tab, items_len, false, window, cx);
+                            });
+                        }
+                    }),
+            )
+    }
+}
+
 impl Render for TerminalPanel {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let registrar = cx
@@ -1372,25 +1554,45 @@ impl Render for TerminalPanel {
                 (callbacks.wrap_div_with_search_actions)(div(), self.active_pane.clone())
             })
             .unwrap_or_else(div);
+        let terminal_settings = TerminalSettings::get_global(cx);
+        let tab_position = terminal_settings.vertical_tab_position;
+        let tab_bar = if terminal_settings.tab_orientation == TerminalTabOrientation::Vertical {
+            Some(self.render_vertical_tab_bar(window, cx).into_any_element())
+        } else {
+            None
+        };
         self.workspace
             .update(cx, |workspace, cx| {
-                registrar
-                    .track_focus(&self.focus_handle)
-                    .size_full()
-                    .child(self.center.render(
-                        workspace.zoomed_item(),
-                        None,
-                        &workspace::PaneRenderContext {
-                            follower_states: &HashMap::default(),
-                            active_call: workspace.active_call(),
-                            active_pane: &self.active_pane,
-                            app_state: workspace.app_state(),
-                            project: workspace.project(),
-                            workspace: &workspace.weak_handle(),
-                        },
-                        window,
-                        cx,
-                    ))
+                let follower_states = HashMap::default();
+                let weak_workspace = workspace.weak_handle();
+                let render_context = workspace::PaneRenderContext {
+                    follower_states: &follower_states,
+                    active_call: workspace.active_call(),
+                    active_pane: &self.active_pane,
+                    app_state: workspace.app_state(),
+                    project: workspace.project(),
+                    workspace: &weak_workspace,
+                };
+                let center = self
+                    .center
+                    .render(workspace.zoomed_item(), None, &render_context, window, cx)
+                    .into_any_element();
+                let registrar = registrar.track_focus(&self.focus_handle).size_full();
+                match tab_bar {
+                    Some(tab_bar) => {
+                        let content = div().flex_1().h_full().overflow_hidden().child(center);
+                        let row = h_flex().size_full();
+                        registrar.child(match tab_position {
+                            TerminalVerticalTabPosition::Left => {
+                                row.child(tab_bar).child(content)
+                            }
+                            TerminalVerticalTabPosition::Right => {
+                                row.child(content).child(tab_bar)
+                            }
+                        })
+                    }
+                    None => registrar.child(center),
+                }
             })
             .ok()
             .map(|div| {
@@ -2088,6 +2290,139 @@ mod tests {
         assert!(
             cx.debug_bounds("KEY_BINDING-enter").is_some(),
             "tooltip should show the InlineAssist keybinding resolved in the terminal's context"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_vertical_tab_orientation_renders_tab_list(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    settings.terminal.get_or_insert_default().tab_orientation =
+                        Some(TerminalTabOrientation::Vertical);
+                });
+            });
+        });
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        for _ in 0..2 {
+            terminal_panel
+                .update_in(cx, |panel, window, cx| {
+                    panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+                })
+                .await
+                .unwrap();
+        }
+        cx.run_until_parked();
+
+        let items = terminal_panel.read_with(cx, |panel, cx| panel.active_pane.read(cx).items_len());
+        assert_eq!(items, 2, "both terminals should be open in the pane");
+
+        let tab_list_bounds = cx
+            .debug_bounds("vertical-terminal-tabs")
+            .expect("vertical tab list should be rendered when tab_orientation is vertical");
+
+        let terminal_bounds = cx
+            .debug_bounds("terminal-content")
+            .expect("terminal content should be rendered alongside the vertical tab list");
+        assert!(
+            terminal_bounds.size.height > px(0.),
+            "terminal content must have non-zero height; \
+             a missing height constraint on the flex wrapper renders it blank"
+        );
+        assert!(
+            terminal_bounds.size.width > px(0.),
+            "terminal content must have non-zero width"
+        );
+        assert!(
+            terminal_bounds.origin.x >= tab_list_bounds.origin.x + tab_list_bounds.size.width,
+            "terminal content should be laid out beside the tab list, not underneath it"
+        );
+
+        let active_before = terminal_panel
+            .read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item_index());
+        terminal_panel.update_in(cx, |panel, window, cx| {
+            panel.active_pane.update(cx, |pane, cx| {
+                pane.activate_item(0, true, true, window, cx);
+            });
+        });
+        cx.run_until_parked();
+        let active_after = terminal_panel
+            .read_with(cx, |panel, cx| panel.active_pane.read(cx).active_item_index());
+        assert_ne!(
+            active_before, active_after,
+            "activating a different tab should change the active item"
+        );
+        assert_eq!(active_after, 0);
+    }
+
+    #[gpui::test]
+    async fn test_vertical_tab_position_right_places_tabs_after_content(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        cx.update(|cx| {
+            SettingsStore::update_global(cx, |store, cx| {
+                store.update_user_settings(cx, |settings| {
+                    let terminal = settings.terminal.get_or_insert_default();
+                    terminal.tab_orientation = Some(TerminalTabOrientation::Vertical);
+                    terminal.vertical_tab_position = Some(TerminalVerticalTabPosition::Right);
+                });
+            });
+        });
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        terminal_panel
+            .update_in(cx, |panel, window, cx| {
+                panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        let tab_list_bounds = cx
+            .debug_bounds("vertical-terminal-tabs")
+            .expect("vertical tab list should be rendered");
+        let terminal_bounds = cx
+            .debug_bounds("terminal-content")
+            .expect("terminal content should be rendered");
+
+        assert!(
+            terminal_bounds.size.height > px(0.),
+            "terminal content must have non-zero height"
+        );
+        assert!(
+            tab_list_bounds.origin.x >= terminal_bounds.origin.x + terminal_bounds.size.width,
+            "tab list should be laid out to the right of the terminal content"
+        );
+    }
+
+    #[gpui::test]
+    async fn test_horizontal_tab_orientation_hides_vertical_tab_list(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+        init_test(cx);
+
+        let (window_handle, terminal_panel) = init_workspace_with_panel(cx).await;
+        let cx = &mut VisualTestContext::from_window(window_handle.into(), cx);
+
+        terminal_panel
+            .update_in(cx, |panel, window, cx| {
+                panel.add_terminal_shell(None, RevealStrategy::Always, window, cx)
+            })
+            .await
+            .unwrap();
+        cx.run_until_parked();
+
+        assert!(
+            cx.debug_bounds("vertical-terminal-tabs").is_none(),
+            "vertical tab list should not render under the default horizontal orientation"
         );
     }
 

@@ -944,6 +944,9 @@ impl VsCodeSettings {
             toolbar: None,
             show_count_badge: None,
             flexible: None,
+            tab_orientation: None,
+            vertical_tab_width: None,
+            vertical_tab_position: None,
         })
     }
 
