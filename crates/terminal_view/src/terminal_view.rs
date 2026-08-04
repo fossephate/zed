@@ -1166,6 +1166,14 @@ fn subscribe_for_terminal_events(
                     cx.emit(ItemEvent::UpdateTab);
                 }
 
+                Event::TabTitleOverrideRequested(title) => {
+                    // Renaming is reserved for the user on task terminals, whose tab shows the
+                    // task label; keep the escape sequence from overriding it there too.
+                    if terminal.read(cx).task().is_none() {
+                        terminal_view.set_custom_title(title.clone(), cx);
+                    }
+                }
+
                 Event::NewNavigationTarget(maybe_navigation_target) => {
                     match maybe_navigation_target
                         .as_ref()
@@ -2166,6 +2174,7 @@ fn first_project_directory(workspace: &Workspace, cx: &App) -> Option<PathBuf> {
 mod tests {
     use super::*;
     use gpui::{TestAppContext, VisualTestContext};
+    use terminal::TAB_TITLE_OSC_MARKER;
     use project::{Entry, Project, ProjectPath, Worktree};
     use remote::RemoteClient;
     use std::path::{Path, PathBuf};
@@ -2944,6 +2953,98 @@ mod tests {
         terminal_view.update(cx, |view, cx| {
             view.set_custom_title(Some("frontend".to_string()), cx);
             assert_eq!(view.custom_title(), Some("frontend"));
+        });
+    }
+
+    #[gpui::test]
+    async fn test_tab_title_osc_sets_and_clears_custom_title(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+
+        let terminal_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal.clone(),
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        terminal.update(cx, |terminal, _cx| {
+            terminal.input(
+                format!("printf '\\033]0;{TAB_TITLE_OSC_MARKER}fixing tab titles\\007'")
+                    .into_bytes(),
+            );
+            terminal.input(b"\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_secs(2)).await;
+        cx.run_until_parked();
+
+        terminal_view.update(cx, |view, _cx| {
+            assert_eq!(view.custom_title(), Some("fixing tab titles"));
+        });
+
+        // An empty payload restores the process-derived title.
+        terminal.update(cx, |terminal, _cx| {
+            terminal.input(format!("printf '\\033]0;{TAB_TITLE_OSC_MARKER}\\007'").into_bytes());
+            terminal.input(b"\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_secs(2)).await;
+        cx.run_until_parked();
+
+        terminal_view.update(cx, |view, _cx| {
+            assert_eq!(view.custom_title(), None);
+        });
+    }
+
+    #[gpui::test]
+    async fn test_plain_title_osc_leaves_custom_title_alone(cx: &mut TestAppContext) {
+        cx.executor().allow_parking();
+
+        let (project, workspace) = init_test(cx).await;
+
+        let terminal = project
+            .update(cx, |project, cx| project.create_terminal_shell(None, cx))
+            .await
+            .unwrap();
+
+        let terminal_view = cx
+            .add_window(|window, cx| {
+                TerminalView::new(
+                    terminal.clone(),
+                    workspace.downgrade(),
+                    None,
+                    project.downgrade(),
+                    window,
+                    cx,
+                )
+            })
+            .root(cx)
+            .unwrap();
+
+        terminal.update(cx, |terminal, _cx| {
+            terminal.input(br"printf '\033]0;an ordinary window title\007'".to_vec());
+            terminal.input(b"\r".to_vec());
+        });
+        cx.executor().timer(Duration::from_secs(2)).await;
+        cx.run_until_parked();
+
+        terminal_view.update(cx, |view, _cx| {
+            assert_eq!(view.custom_title(), None);
+        });
+        terminal.update(cx, |terminal, _cx| {
+            assert_eq!(terminal.breadcrumb_text, "an ordinary window title");
         });
     }
 

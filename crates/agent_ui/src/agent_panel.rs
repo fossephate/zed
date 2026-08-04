@@ -2191,6 +2191,7 @@ impl AgentPanel {
             window,
             move |this, _terminal, event: &TerminalEvent, window, cx| match event {
                 TerminalEvent::TitleChanged
+                | TerminalEvent::TabTitleOverrideRequested(_)
                 | TerminalEvent::Wakeup
                 | TerminalEvent::BreadcrumbsChanged => {
                     this.refresh_terminal_metadata(terminal_id, cx);

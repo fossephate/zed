@@ -680,6 +680,9 @@ pub fn insert_zed_terminal_env(
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Event {
     TitleChanged,
+    /// A `\e]0;zed;tab-title=...\a` sequence asked to rename the tab. `None` clears the
+    /// custom title, restoring the process-derived one.
+    TabTitleOverrideRequested(Option<String>),
     BreadcrumbsChanged,
     CloseTerminal,
     Bell,
@@ -906,6 +909,9 @@ static NEXT_INIT_COMMAND_STARTUP_MARKER_ID: AtomicU64 = AtomicU64::new(1);
 const INIT_COMMAND_STARTUP_MARKER_PREFIX: &str = "__zed_init_command_ready_";
 const INIT_COMMAND_STARTUP_MARKER_SUFFIX: &str = "__";
 const INIT_COMMAND_STARTUP_MARKER_SEARCH_LINES: usize = 64;
+
+/// Prefix that distinguishes a tab-rename request from an ordinary OSC 0/2 window title.
+pub const TAB_TITLE_OSC_MARKER: &str = "zed;tab-title=";
 
 fn init_command_startup_marker(marker_id: u64) -> String {
     format!("{INIT_COMMAND_STARTUP_MARKER_PREFIX}{marker_id}{INIT_COMMAND_STARTUP_MARKER_SUFFIX}")
@@ -1594,6 +1600,18 @@ impl Terminal {
     fn process_event(&mut self, event: TerminalBackendEvent, cx: &mut Context<Self>) {
         match event {
             TerminalBackendEvent::Title(title) => {
+                // vte only forwards a fixed set of OSC codes to its handler and silently drops
+                // unknown ones, so a bespoke OSC number is not available to us. Zed-specific
+                // requests instead ride along inside the OSC 0/2 payload behind this marker,
+                // which vte reassembles verbatim (it rejoins extra `;` params with `;`).
+                if let Some(tab_title) = title.strip_prefix(TAB_TITLE_OSC_MARKER) {
+                    let tab_title = tab_title.trim();
+                    cx.emit(Event::TabTitleOverrideRequested(
+                        (!tab_title.is_empty()).then(|| tab_title.to_owned()),
+                    ));
+                    return;
+                }
+
                 // ignore default shell program title change as windows always sends those events
                 // and it would end up showing the shell executable path in breadcrumbs
                 #[cfg(windows)]
